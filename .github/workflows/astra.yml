@@ -1,0 +1,33 @@
+name: Security Scan
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Install Astra
+        run: |
+          git clone https://github.com/flipkart-incubator/Astra.git
+          cd Astra
+          pip install -r requirements.txt
+
+      - name: Run Astra Security Scan
+        run: |
+          cd Astra
+          python astra.py --url http://your-app-url --config config.json --report report.json
+
+      - name: Upload Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-report
+          path: Astra/report.json
