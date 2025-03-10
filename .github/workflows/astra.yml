@@ -1,5 +1,5 @@
-name: Security Scan
-
+name: API Security Scan with OWASP ZAP
+ 
 on:
   push:
     branches:
@@ -7,27 +7,37 @@ on:
   pull_request:
     branches:
       - main
-
+  schedule:
+    - cron: '0 0 * * 1'  # Runs every Monday
+ 
 jobs:
-  security-scan:
+  zap_scan:
     runs-on: ubuntu-latest
+ 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Install Astra
-        run: |
-          git clone https://github.com/flipkart-incubator/Astra.git
-          cd Astra
-          pip install -r requirements.txt
-
-      - name: Run Astra Security Scan
-        run: |
-          cd Astra
-          python astra.py --url http://your-app-url --config config.json --report report.json
-
-      - name: Upload Report
-        uses: actions/upload-artifact@v3
-        with:
-          name: security-report
-          path: Astra/report.json
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    - name: Run OWASP ZAP API Scan
+      uses: zaproxy/action-api-scan@v0.7.0
+      with:
+        target: 'https://api.genderize.io/?name=luc'
+        rules_file_name: '.zap/rules.tsv'
+        allow_issue_writing: false 
+        fail_action: false  
+ 
+    - name: Sanitize Artifact Name
+      id: sanitize
+      run: |
+        ARTIFACT_NAME="ZAP-API-Scan-Report"
+ 
+      
+        SANITIZED_NAME=$(echo "$ARTIFACT_NAME" | sed 's/[^a-zA-Z0-9._-]/-/g')
+ 
+     
+        echo "artifact_name=$SANITIZED_NAME" >> $GITHUB_OUTPUT
+ 
+    - name: Upload Scan Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.sanitize.outputs.artifact_name }}
+        path: zap_scan_results.json
