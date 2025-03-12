@@ -1,4 +1,5 @@
 name: ZAP Authenticated API Scan
+
 on:
   workflow_dispatch:
     inputs:
@@ -16,12 +17,12 @@ on:
 
 jobs:
   resolve-runner:
-    name: Resolve Runner from Environment
+    name: Resolve Runner for ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     outputs:
-      runner: ${{ steps.set_runner.outputs.runner }}
+      runner: ${{ steps.set-runner.outputs.runner }}
     steps:
-      - id: set_runner
+      - id: set-runner
         run: |
           ENV="${{ github.event.inputs.environment }}"
           if [[ "$ENV" == "prod" || "$ENV" == "demo" || "$ENV" == "stage" ]]; then
@@ -35,7 +36,7 @@ jobs:
           fi
 
   zap-api-scan:
-    name: Generate JWT & Run ZAP
+    name: Generate JWT and Run ZAP Scan
     needs: resolve-runner
     runs-on: ${{ needs.resolve-runner.outputs.runner }}
     environment: ${{ github.event.inputs.environment }}
@@ -57,12 +58,12 @@ jobs:
       MASTER_SALT: ${{ secrets.MASTER_SALT }}
 
     steps:
-      - name: Checkout Automation Code
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
           ref: development
 
-      - name: Install Dependencies
+      - name: Install jq
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
@@ -88,12 +89,13 @@ jobs:
             --db_password=$DB_PASSWORD \
             --target_db_cluster=$DB_CLUSTER_NAME
 
+          echo "Reading JWT from file..."
           TOKEN=$(cat /tmp/some_random_value.txt)
           echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Inject JWT into OpenAPI Spec
         run: |
-          echo "Injecting JWT token into OpenAPI spec..."
+          echo "Injecting JWT into OpenAPI spec..."
           curl -s "https://your.api.domain.com/openapi.json" | jq --arg token "$TOKEN" '
             .components.securitySchemes.BearerAuth = {
               type: "http",
