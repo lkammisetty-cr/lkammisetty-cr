@@ -1,32 +1,88 @@
 name: ZAP Authenticated API Scan
-
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
+    inputs:
+      environment:
+        description: 'Environment to point automation run'
+        required: true
+        type: choice
+        options:
+          - qa1
+          - qa2
+          - stage
+          - demo
+          - dev2
+          - redwave
 
 jobs:
   zap-api-scan:
-    runs-on: ubuntu-latest
+    name: Generate JWT & Run ZAP Scan
+    runs-on: ${{ fromJson('{
+      "prod": "checkred-prod",
+      "demo": "checkred-prod",
+      "stage": "checkred-prod",
+      "qa1": "checkred",
+      "qa2": "checkred",
+      "redwave": "redwave"
+    }')[github.event.inputs.environment] || 'red-internal-devops-tools' }}
+    environment: ${{ github.event.inputs.environment }}
 
-    strategy:
-      matrix:
-        spec:
-          - 'https://your.api.domain.com/service1/openapi.json'
-          - 'https://your.api.domain.com/service2/openapi.json'
-          - 'https://your.api.domain.com/service3/openapi.json'
+    env:
+      ENV: ${{ github.event.inputs.environment }}
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_CLUSTER_NAME: ${{ secrets.DB_CLUSTER_NAME }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      LMS_SERVER_HOST: ${{ secrets.LMS_SERVER_HOST }}
+      LMS_SERVER_PORT: ${{ secrets.LMS_SERVER_PORT }}
+      ENV_QA_TENANT_ALIAS: ${{ secrets.QA_TENANT_ALIAS }}
+      ENV_QA_TENANT_USERNAME: ${{ secrets.QA_TENANT_USERNAME }}
+      ENV_QA_TENANT_PASSWORD: ${{ secrets.QA_TENANT_PASSWORD }}
+      SALT_MASTER_KEY: ${{ secrets.SALT_MASTER_KEY }}
+      MASTER_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY }}
+      MASTER_SALT: ${{ secrets.MASTER_SALT }}
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          ref: development
 
-      - name: Install JQ
-        run: sudo apt-get install -y jq
-
-      - name: Download and Preprocess OpenAPI Spec with JWT
+      - name: Install Tools
         run: |
-          echo "Fetching and modifying OpenAPI spec from ${{ matrix.spec }}"
-          curl -s "${{ matrix.spec }}" | jq --arg token "${{ secrets.JWT_TOKEN }}" '
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Activate Global Python Virtual Env
+        run: |
+          source /home/ubuntu/global-venv/bin/activate
+          python3 --version
+          pip3 freeze
+
+      - name: Generate JWT Token
+        id: generate-token
+        run: |
+          source /home/ubuntu/global-venv/bin/activate
+          python3.9 -m pytest src/tenant_onboarding_scripts/test_get_jwt_token.py \
+            --target_env=$ENV \
+            --env_qa_tenant_login_alias=$ENV_QA_TENANT_ALIAS \
+            --env_qa_tenant_login_username=$ENV_QA_TENANT_USERNAME \
+            --env_qa_tenant_login_password=$ENV_QA_TENANT_PASSWORD \
+            --db_host=$DB_HOST \
+            --db_port=$DB_PORT \
+            --db_username=$DB_USERNAME \
+            --db_password=$DB_PASSWORD \
+            --target_db_cluster=$DB_CLUSTER_NAME
+
+          echo "Reading JWT from file..."
+          TOKEN=$(cat /tmp/some_random_value.txt)
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: Inject JWT into OpenAPI Spec
+        run: |
+          echo "Injecting JWT into OpenAPI spec..."
+          curl -s "https://your.api.domain.com/openapi.json" | jq --arg token "$TOKEN" '
             .components.securitySchemes.BearerAuth = {
               type: "http",
               scheme: "bearer",
@@ -35,7 +91,7 @@ jobs:
             .security = [{"BearerAuth": []}]
           ' > processed-spec.json
 
-      - name: Run ZAP API Scan on ${{ matrix.spec }}
+      - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.6.0
         with:
           target: 'file://$(pwd)/processed-spec.json'
@@ -48,5 +104,5 @@ jobs:
       - name: Upload ZAP HTML Report
         uses: actions/upload-artifact@v4
         with:
-          name: zap-report-${{ matrix.spec }}
+          name: zap-report
           path: zap_report.html
