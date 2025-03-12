@@ -14,7 +14,7 @@ jobs:
         spec:
           - 'https://your.api.domain.com/service1/openapi.json'
           - 'https://your.api.domain.com/service2/openapi.json'
-          - 'https://your.api.domain.com/service3/openapi.json'  # Add more as needed
+          - 'https://your.api.domain.com/service3/openapi.json'
 
     steps:
       - name: Checkout Code
@@ -41,12 +41,12 @@ jobs:
           target: 'file://$(pwd)/processed-spec.json'
           format: openapi
           fail_action: false
-          report_html: 'zap_report_${{ matrix.spec }}.html'
+          report_html: 'zap_report.html'
         env:
           ZAP_API_KEY: ${{ secrets.ZAP_API_KEY }}
 
       - name: Upload ZAP HTML Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: zap-report-${{ matrix.spec }}
-          path: zap_report_${{ matrix.spec }}.html
+          path: zap_report.html
