@@ -1,43 +1,98 @@
-name: API Security Scan with OWASP ZAP
- 
+name: QA Code Testing Job
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-  schedule:
-    - cron: '0 0 * * 1'  # Runs every Monday
- 
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to point automation run'
+        required: true
+        type: choice
+        options:
+          - qa1
+          - qa2
+          - stage
+          - demo
+          - dev2
+          - redwave
 jobs:
-  zap_scan:
+  Check-Environment-for-Runner:
+    name: Check the enironment to use self-hosted runner as per project
     runs-on: ubuntu-latest
- 
+    outputs:
+      runner: ${{ steps.check_environment.outputs.runner }}
     steps:
-    - name: Checkout Repository
+      - name: Check the environment for decided self-hosted runner
+        id: check_environment
+        run: |
+          if [ ${{ github.event.inputs.environment }} == 'prod' ] || [ ${{ github.event.inputs.environment }} == 'demo' ] || [ ${{ github.event.inputs.environment }} == 'stage' ]; then
+            echo "runner=checkred-prod" >> $GITHUB_OUTPUT
+          elif [ ${{ github.event.inputs.environment }} == 'qa1' ] || [ ${{ github.event.inputs.environment }} == 'qa2' ]; then
+            echo "runner=checkred" >> $GITHUB_OUTPUT
+          elif [ ${{ github.event.inputs.environment }} == 'redwave' ]; then
+            echo "runner=redwave" >> $GITHUB_OUTPUT
+          else
+            echo "runner=checkred-internal-devops-tools" >> $GITHUB_OUTPUT
+          fi
+
+  generate-token:
+    needs: [Check-Environment-for-Runner]
+    runs-on: ${{ needs.Check-Environment-for-Runner.outputs.runner }}
+    environment: ${{ github.event.inputs.environment }}
+    outputs:
+      print_value: ${{ steps.generate.outputs.encoded_value }}
+    env:
+      ENV: ${{ github.event.inputs.environment }}
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_CLUSTER_NAME: ${{ secrets.DB_CLUSTER_NAME }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      LMS_SERVER_HOST: ${{ secrets.LMS_SERVER_HOST }}
+      LMS_SERVER_PORT: ${{ secrets.LMS_SERVER_PORT }}
+      ENV_QA_TENANT_ALIAS: ${{ secrets.QA_TENANT_ALIAS }}
+      ENV_QA_TENANT_USERNAME: ${{ secrets.QA_TENANT_USERNAME }}
+      ENV_QA_TENANT_PASSWORD: ${{ secrets.QA_TENANT_PASSWORD }}
+      SALT_MASTER_KEY: ${{ secrets.SALT_MASTER_KEY }}
+      MASTER_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY }}
+      MASTER_SALT: ${{ secrets.MASTER_SALT }}
+    steps:
+    - name: Checkout automation customer onboarding code
       uses: actions/checkout@v4
-    - name: Run OWASP ZAP API Scan
-      uses: zaproxy/action-api-scan@v0.7.0
       with:
-        target: 'https://api.genderize.io/?name=luc'
-        rules_file_name: '.zap/rules.tsv'
-        allow_issue_writing: false 
-        fail_action: false  
- 
-    - name: Sanitize Artifact Name
-      id: sanitize
+        ref: development
+
+    - name: Create python virtual environment
       run: |
-        ARTIFACT_NAME="ZAP-API-Scan-Report"
- 
-      
-        SANITIZED_NAME=$(echo "$ARTIFACT_NAME" | sed 's/[^a-zA-Z0-9._-]/-/g')
- 
-     
-        echo "artifact_name=$SANITIZED_NAME" >> $GITHUB_OUTPUT
- 
-    - name: Upload Scan Report
+        source /home/ubuntu/global-venv/bin/activate
+        python3 --version
+        pip3 freeze
+        pip3 list
+
+    - name: Generate JWT token
+      id: generate
+      run: |
+        python3 --version
+        source /home/ubuntu/global-venv/bin/activate
+        python3.9 -m pytest src/tenant_onboarding_scripts/test_get_jwt_token.py --target_env=$ENV --env_qa_tenant_login_alias=$ENV_QA_TENANT_ALIAS --env_qa_tenant_login_username=$ENV_QA_TENANT_USERNAME  --env_qa_tenant_login_password=$ENV_QA_TENANT_PASSWORD --db_host=$DB_HOST --db_port=$DB_PORT --db_username=$DB_USERNAME --db_password=$DB_PASSWORD --target_db_cluster=$DB_CLUSTER_NAME
+        SOME_VALUE=$(cat /tmp/some_random_value.txt)  # Read token from file
+        echo "$SOME_VALUE" > token.txt
+    - name: Upload Token as Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ steps.sanitize.outputs.artifact_name }}
-        path: zap_scan_results.json
+        name: jwt-token
+        path: token.txt
+  use-token:
+    runs-on: ubuntu-latest
+    needs: generate-token
+    steps:
+      - name: Use Token
+        run: |
+          DECODED_VALUE=$(echo "${{ needs.generate-token.outputs.print_value }}" | base64 --decode)
+          echo "Decoded Value: $DECODED_VALUE"
+      - name: Download Token Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: jwt-token
+      - name: Print Token
+        run: |
+          TOKEN=$(cat token.txt)
+          echo "Token: $TOKEN"
