@@ -15,16 +15,29 @@ on:
           - redwave
 
 jobs:
+  resolve-runner:
+    name: Resolve Runner from Environment
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.set_runner.outputs.runner }}
+    steps:
+      - id: set_runner
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          if [[ "$ENV" == "prod" || "$ENV" == "demo" || "$ENV" == "stage" ]]; then
+            echo "runner=checkred-prod" >> $GITHUB_OUTPUT
+          elif [[ "$ENV" == "qa1" || "$ENV" == "qa2" ]]; then
+            echo "runner=checkred" >> $GITHUB_OUTPUT
+          elif [[ "$ENV" == "redwave" ]]; then
+            echo "runner=redwave" >> $GITHUB_OUTPUT
+          else
+            echo "runner=red-internal-devops-tools" >> $GITHUB_OUTPUT
+          fi
+
   zap-api-scan:
-    name: Generate JWT & Run ZAP Scan
-    runs-on: ${{ fromJson('{
-      "prod": "checkred-prod",
-      "demo": "checkred-prod",
-      "stage": "checkred-prod",
-      "qa1": "checkred",
-      "qa2": "checkred",
-      "redwave": "redwave"
-    }')[github.event.inputs.environment] || 'red-internal-devops-tools' }}
+    name: Generate JWT & Run ZAP
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
     environment: ${{ github.event.inputs.environment }}
 
     env:
@@ -44,12 +57,12 @@ jobs:
       MASTER_SALT: ${{ secrets.MASTER_SALT }}
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Automation Code
         uses: actions/checkout@v4
         with:
           ref: development
 
-      - name: Install Tools
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
@@ -58,7 +71,7 @@ jobs:
         run: |
           source /home/ubuntu/global-venv/bin/activate
           python3 --version
-          pip3 freeze
+          pip3 list
 
       - name: Generate JWT Token
         id: generate-token
@@ -75,13 +88,12 @@ jobs:
             --db_password=$DB_PASSWORD \
             --target_db_cluster=$DB_CLUSTER_NAME
 
-          echo "Reading JWT from file..."
           TOKEN=$(cat /tmp/some_random_value.txt)
           echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Inject JWT into OpenAPI Spec
         run: |
-          echo "Injecting JWT into OpenAPI spec..."
+          echo "Injecting JWT token into OpenAPI spec..."
           curl -s "https://your.api.domain.com/openapi.json" | jq --arg token "$TOKEN" '
             .components.securitySchemes.BearerAuth = {
               type: "http",
@@ -101,7 +113,7 @@ jobs:
         env:
           ZAP_API_KEY: ${{ secrets.ZAP_API_KEY }}
 
-      - name: Upload ZAP HTML Report
+      - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
